@@ -32,3 +32,6 @@ next-env.d.ts
 .opencode/
 AI-Portal.exe
 *.log
+
+# dev session logs
+conversations/
