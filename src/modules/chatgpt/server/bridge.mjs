@@ -4,6 +4,9 @@ import { detectBrowsers } from "./detect-browser.mjs";
 
 const PORT = Number(process.env.BRIDGE_PORT || 3456);
 const HEADLESS = process.env.BRIDGE_HEADLESS === "1";
+// Keep the browser window tucked away (minimized) so it never pops up over the
+// user's work. Set BRIDGE_MINIMIZED=0 to show it again.
+const MINIMIZED = process.env.BRIDGE_MINIMIZED !== "0";
 
 const LAST_ASSISTANT = '[data-message-author-role="assistant"]';
 
@@ -73,9 +76,11 @@ async function ensureBrowser() {
         headless: HEADLESS,
         channel: isChrome ? "chrome" : undefined,
         viewport: { width: 1280, height: 900 },
+        args: MINIMIZED ? ["--start-minimized"] : [],
       });
       browser = ctx;
       page = null; // never reuse a user's existing tab
+      if (MINIMIZED) await minimizeWindow(ctx);
       return browser;
     } catch (e) {
       lastErr = e.message;
@@ -83,6 +88,23 @@ async function ensureBrowser() {
     }
   }
   throw new Error(`All browsers failed to launch. ${lastErr}`);
+}
+
+// Minimize the browser window (best-effort). Falls back to the Chromium
+// --start-minimized launch flag; this CDP path re-asserts it after a page exists.
+async function minimizeWindow() {
+  if (!MINIMIZED) return;
+  try {
+    const p = page || (browser && typeof browser.pages === "function" && browser.pages()[0]);
+    if (!p || typeof browser.newCDPSession !== "function") return;
+    const cdp = await browser.newCDPSession(p);
+    const { windowId } = await cdp.send("Browser.getWindowForTarget", {});
+    await cdp.send("Browser.setWindowBounds", { windowId, bounds: { windowState: "minimized" } });
+    await cdp.detach().catch(() => {});
+    log("Browser window minimized");
+  } catch (e) {
+    log("Minimize skipped (harmless):", (e.message || "").split("\n")[0]);
+  }
 }
 
 // Return the bridge's single chat tab. Opens ONE tab on first use, then reuses it
@@ -105,6 +127,7 @@ async function getChatPage() {
   p.setDefaultNavigationTimeout(60 * 1000);
   await p.goto("https://chatgpt.com/", { waitUntil: "domcontentloaded" }).catch(() => {});
   page = p;
+  await minimizeWindow();
   return p;
 }
 
