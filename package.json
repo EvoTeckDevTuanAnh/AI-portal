@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "bridge": "node scripts/chatgpt-bridge.mjs",
+    "bridge": "node src/modules/chatgpt/server/bridge.mjs",
     "start:all": "node scripts/start.mjs",
     "start:all:nobrowser": "set OPEN_BROWSER=0&& node scripts/start.mjs"
   },

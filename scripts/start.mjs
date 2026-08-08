@@ -14,7 +14,7 @@ const root = path.resolve(__dirname, "..");
 const BRIDGE_PORT = Number(process.env.BRIDGE_PORT || 3456);
 const WEB_PORT = Number(process.env.WEB_PORT || 3000);
 
-const NEXT_MARKERS = ["next","dist\\bin\\next","\\next\\dev","chatgpt-bridge"];
+const NEXT_MARKERS = ["next","dist\\bin\\next","\\next\\dev","bridge.mjs"];
 
 function log(...a) { console.log(new Date().toISOString(), ...a); }
 
@@ -67,7 +67,7 @@ function killStaleDevServers() {
         r.cmd.includes("next") &&
         (r.cmd.includes("next dev") || r.cmd.includes("next\\dev") || r.cmd.includes("start-server.js")) &&
         r.cmd.includes("AI-portal") &&
-        !r.cmd.includes("chatgpt-bridge.mjs")
+        !r.cmd.includes("bridge.mjs")
       );
       if (stale.length === 0) { log("No stale dev server found."); return resolve([]); }
       for (const s of stale) {
@@ -95,7 +95,7 @@ function clearNextCache() {
     log(`Bridge already running on :${BRIDGE_PORT} — reusing it.`);
   } else {
     log(`Starting bridge on :${BRIDGE_PORT}...`);
-    spawn("node", [path.join("scripts", "chatgpt-bridge.mjs")], { cwd: root, stdio: "inherit", windowsHide: true });
+    spawn("node", [path.join("src", "modules", "chatgpt", "server", "bridge.mjs")], { cwd: root, stdio: "inherit", windowsHide: true });
   }
 
   // 3. Web app — now with a free, clean .next, start exactly one dev server.

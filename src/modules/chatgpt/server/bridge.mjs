@@ -1,10 +1,7 @@
 import http from "node:http";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { detectBrowsers } from "./detect-browser.mjs";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.BRIDGE_PORT || 3456);
 const HEADLESS = process.env.BRIDGE_HEADLESS === "1";
 

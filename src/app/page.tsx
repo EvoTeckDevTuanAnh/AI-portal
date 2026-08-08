@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Sidebar from "@/components/sidebar";
-import MainContent from "@/components/main-content";
+import ChatPanel from "@/modules/chatgpt/client/chat-panel";
 import ProjectsPanel from "@/components/projects-panel";
 
 export default function Dashboard() {
@@ -11,7 +11,7 @@ export default function Dashboard() {
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-surface">
       <Sidebar />
-      <MainContent onOpenNav={() => setNavOpen(true)} />
+      <ChatPanel onOpenNav={() => setNavOpen(true)} />
       <ProjectsPanel />
 
       {/* Mobile drawer (sidebar + projects) */}
