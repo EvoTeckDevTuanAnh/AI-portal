@@ -17,11 +17,49 @@ let busy = false;
 
 function log(...a) { console.log(new Date().toISOString(), ...a); }
 
+function pageAlive(p) {
+  try {
+    return !!(p && !p.isClosed());
+  } catch {
+    return false;
+  }
+}
+
+// `browser` here is the BrowserContext returned by launchPersistentContext. It has
+// no `.isClosed()`. A context whose browser process died (user closed the window)
+// must be treated as dead — otherwise we keep returning a dead session forever.
+function browserAlive() {
+  try {
+    if (!browser) return false;
+    const b = typeof browser.browser === "function" ? browser.browser() : browser;
+    return !!(b && typeof b.isConnected === "function" && b.isConnected());
+  } catch {
+    return false;
+  }
+}
+
+// Hard-tear-down the whole Playwright session and drop the profile lock so a fresh
+// launch can actually start a new browser process.
+async function resetSession() {
+  log("Reset bridge session (closing browser)");
+  try {
+    if (pageAlive(page)) await page.close();
+  } catch {}
+  try {
+    if (browserAlive()) await browser.close();
+  } catch {}
+  if (page) page = null;
+  if (browser) browser = null;
+  await new Promise((r) => setTimeout(r, 1200));
+}
+
 // Launch a persistent browser context for a ChatGPT session, trying each detected
 // browser in turn. If one fails (e.g. profile already in use), fall through to the
 // next valid browser immediately.
 async function ensureBrowser() {
-  if (browser && !browser.isClosed()) return browser;
+  if (browserAlive()) return browser;
+  // Teardown the dead session so the same userDataDir/profile is no longer locked.
+  await resetSession();
   const list = detectBrowsers();
   if (list.length === 0) throw new Error("No supported browser found on this machine.");
   const preferred = (process.env.BRIDGE_BROWSER || "").toLowerCase();
@@ -55,7 +93,7 @@ async function ensureBrowser() {
 // re-navigates if the tab drifted away from chatgpt.com.
 async function getChatPage() {
   const ctx = await ensureBrowser();
-  if (page && !page.isClosed()) {
+  if (pageAlive(page)) {
     try {
       const u = new URL(page.url());
       if (u.hostname.includes("chatgpt.com")) return page;
@@ -139,15 +177,32 @@ async function waitForAnswer(p, before) {
 }
 
 async function chat(prompt) {
-  const p = await getChatPage();
-  const ready = await ensureComposer(p, 120 * 1000);
-  if (!ready) throw new Error("Not logged in / ChatGPT composer not found. Log in in the open browser window, then try again.");
-  const before = await p.locator(LAST_ASSISTANT).count();
-  await setPrompt(p, prompt);
-  await p.keyboard.press("Enter");
-  const answer = await waitForAnswer(p, before);
-  if (!answer) throw new Error("No completion received from ChatGPT in time.");
-  return answer;
+  let lastErr = "";
+  // One retry with a full browser relaunch covers the case where the browser window
+  // was closed (and reopened by the user) while the bridge still held a dead session.
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const p = await getChatPage();
+      const ready = await ensureComposer(p, 120 * 1000);
+      if (!ready) throw new Error("Not logged in / ChatGPT composer not found. Log in in the open browser window, then try again.");
+      if (!pageAlive(p)) throw new Error("Chat tab was closed while preparing.");
+      const before = await p.locator(LAST_ASSISTANT).count();
+      await setPrompt(p, prompt);
+      await p.keyboard.press("Enter");
+      const answer = await waitForAnswer(p, before);
+      if (answer) return answer;
+      throw new Error("No completion received from ChatGPT in time.");
+    } catch (e) {
+      lastErr = e.message;
+      log(`chat attempt ${attempt} failed:`, e.message);
+      if (attempt === 1) {
+        // Tear the dead session down so the next iteration launches a brand-new browser.
+        await resetSession();
+      }
+    }
+  }
+  if (!lastErr) lastErr = "Chat failed.";
+  throw new Error(lastErr);
 }
 
 function pump() {
@@ -180,7 +235,7 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "GET" && (u.pathname === "/health" || u.pathname === "/ready")) {
     // /ready: report whether the ChatGPT composer (input box) is loaded yet.
-    const pageOpen = !!(page && !page.isClosed());
+    const pageOpen = pageAlive(page);
     let composerReady = false;
     if (pageOpen) {
       try {
