@@ -9,6 +9,11 @@ const HEADLESS = process.env.BRIDGE_HEADLESS === "1";
 const MINIMIZED = process.env.BRIDGE_MINIMIZED !== "0";
 
 const LAST_ASSISTANT = '[data-message-author-role="assistant"]';
+// If ChatGPT's stream gets stuck (loading/stop forever, no new text), we reload the
+// page and resend once instead of waiting the full deadline.
+const STALL_MS = 45 * 1000;
+
+class ChatStallError extends Error {}
 
 let browser;
 let page;
@@ -184,13 +189,14 @@ async function waitForAnswer(p, before, onProgress) {
   let stable = 0;
   const deadline = Date.now() + 150 * 1000;
   let lastReport = 0;
+  let lastMove = Date.now();
   while (Date.now() < deadline) {
     const count = await p.locator(LAST_ASSISTANT).count();
     if (count >= target) {
       const text = (await p.locator(LAST_ASSISTANT).nth(count - 1).innerText().catch(() => "")) || "";
       if (text.trim()) {
         if (text === answer) stable += 1;
-        else { answer = text; stable = 0; }
+        else { answer = text; stable = 0; lastMove = Date.now(); }
         // report growing answer every ~1s so the UI shows the reply appearing
         const now = Date.now();
         if (now - lastReport > 1000) {
@@ -199,11 +205,25 @@ async function waitForAnswer(p, before, onProgress) {
         }
       }
     }
-    const stopGone = await stopBtnGone(p);
-    if (answer.trim() && stopGone && stable >= 2) return answer;
+    const stopActive = !(await stopBtnGone(p));
+    // STUCK: stream active for a long while with zero DOM movement → the page's
+    // generation loop likely died (loading/stop stuck). Reloading restarts it.
+    if (stopActive && Date.now() - lastMove > STALL_MS) {
+      throw new ChatStallError("ChatGPT got stuck (no response progress)");
+    }
+    if (answer.trim() && !stopActive && stable >= 2) return answer;
     await p.waitForTimeout(400);
   }
   return answer.trim() ? answer : "";
+}
+
+async function sendAndWait(p, prompt, onProgress) {
+  onProgress?.("sending", "Đang gửi câu hỏi…");
+  const before = await p.locator(LAST_ASSISTANT).count();
+  await setPrompt(p, prompt);
+  await p.keyboard.press("Enter");
+  onProgress?.("thinking", "AI đang xử lý…");
+  return await waitForAnswer(p, before, onProgress);
 }
 
 async function chat(prompt, onProgress) {
@@ -212,20 +232,28 @@ async function chat(prompt, onProgress) {
   // was closed (and reopened by the user) while the bridge still held a dead session.
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      onProgress?.("ready", "Đang chuẩn bị trình duyệt…");
+      onProgress?.("ready", "Đang chuẩn bị AI…");
       const p = await getChatPage();
-      onProgress?.("prepare", "Đang chờ ô nhập của ChatGPT…");
+      onProgress?.("prepare", "Đang chờ khung soạn thảo…");
       const ready = await ensureComposer(p, 120 * 1000);
-      if (!ready) throw new Error("Not logged in / ChatGPT composer not found. Log in in the open browser window, then try again.");
-      if (!pageAlive(p)) throw new Error("Chat tab was closed while preparing.");
-      onProgress?.("sending", "Đang gửi câu hỏi…");
-      const before = await p.locator(LAST_ASSISTANT).count();
-      await setPrompt(p, prompt);
-      await p.keyboard.press("Enter");
-      onProgress?.("thinking", "ChatGPT đang trả lời…");
-      const answer = await waitForAnswer(p, before, onProgress);
-      if (answer) return answer;
-      throw new Error("No completion received from ChatGPT in time.");
+      if (!ready) throw new Error("Phiên chưa đăng nhập / khung soạn thảo không tìm thấy. Vui lòng đăng nhập trong cửa sổ AI, rồi thử lại.");
+      if (!pageAlive(p)) throw new Error("Cửa sổ AI bị đóng khi đang chuẩn bị.");
+      try {
+        return await sendAndWait(p, prompt, onProgress);
+      } catch (e) {
+        // ChatGPT stream stuck (loading/stop forever) — reload the page once and
+        // resend. A plain click on Stop won't fix a wedged generation loop.
+        if (e instanceof ChatStallError) {
+          onProgress?.("stall", "AI không phản hồi, đang tải lại…");
+          log("Stalled generation — reloading the AI page and resending once.");
+          try { await p.reload({ waitUntil: "domcontentloaded" }); } catch {}
+          const ok = await ensureComposer(p, 60 * 1000);
+          if (!ok || !pageAlive(p)) throw e;
+          onProgress?.("prepare", "Đã tải lại, gửi lại câu hỏi…");
+          return await sendAndWait(p, prompt, onProgress);
+        }
+        throw e;
+      }
     } catch (e) {
       lastErr = e.message;
       log(`chat attempt ${attempt} failed:`, e.message);

@@ -12,7 +12,8 @@ export type ChatProgressStage =
   | "prepare"
   | "sending"
   | "thinking"
-  | "typing";
+  | "typing"
+  | "stall";
 
 export type BridgeState = {
   port: number;
@@ -37,12 +38,12 @@ export async function bridgeEnsure(onStatus?: (s: string) => void): Promise<Brid
   }
 
   // Not ready → only now start/open a fresh browser session.
-  onStatus?.("ChatGPT chưa sẵn sàng, đang mở trình duyệt khởi tạo phiên mới…");
+  onStatus?.("AI chưa sẵn sàng, đang khởi tạo…");
   await fetch(`/api/bridge`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ force: false }) }).catch(() => {});
 
   const startup = 60; // wait up to ~60s for the browser + composer after launch
   for (let i = 1; i <= startup; i++) {
-    onStatus?.(`Đang khởi động ChatGPT, chờ ô nhập… (${i}/${startup})`);
+    onStatus?.(`Đang khởi động phiên trò chuyện… (${i}/${startup})`);
     const st = await fetch(`/api/bridge`).then((r) => r.json()).catch(() => null) as BridgeState | null;
     if (st && st.up && st.health?.composerReady) return st;
     // Force-restart the bridge after a few wasted polls: the fresh spawned process
@@ -53,17 +54,17 @@ export async function bridgeEnsure(onStatus?: (s: string) => void): Promise<Brid
 
   // Still not ready (stale session where the browser was closed) → kill + spawn the
   // whole bridge; its startup routine opens ChatGPT in a new browser automatically.
-  onStatus?.("Trình duyệt đã đóng, đang khởi động lại phiên…");
+  onStatus?.("Phiên bị đóng, đang mở lại phiên trò chuyện…");
   await fetch(`/api/bridge`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ force: true }) }).catch(() => {});
   await new Promise((r) => setTimeout(r, 2000));
 
   for (let i = 1; i <= startup; i++) {
-    onStatus?.(`Đang mở lại trình duyệt ChatGPT, chờ ô nhập… (${i}/${startup})`);
+    onStatus?.(`Đang mở lại phiên trò chuyện… (${i}/${startup})`);
     const st = await fetch(`/api/bridge`).then((r) => r.json()).catch(() => null) as BridgeState | null;
     if (st && st.up && st.health?.composerReady) return st;
     await new Promise((r) => setTimeout(r, 1000));
   }
-  throw new Error("Bridge not ready: ChatGPT web did not load its input box in time.");
+  throw new Error("Phiên trò chuyện chưa sẵn sàng: khung soạn thảo không khởi động kịp.");
 }
 
 // Bridge /chat itself warms up the composer, sends the prompt, waits for the reply.
@@ -79,7 +80,7 @@ export async function askChatGPT(
   let tries = 0;
   while (tries < 6) {
     tries += 1;
-    onStatus?.(tries === 1 ? "Đang chuẩn bị ChatGPT…" : `Bridge được khởi động lại, chuẩn bị gửi lại… (${tries})`);
+    onStatus?.(tries === 1 ? "Đang chuẩn bị AI…" : `Phiên được khởi động lại, chuẩn bị gửi lại… (${tries})`);
     await bridgeEnsure(onStatus);
 
     try {
@@ -116,7 +117,7 @@ export async function askChatGPT(
         let done = "";
         let errText = "";
         const reader = res.body?.getReader();
-        if (!reader) throw new Error("Bridge did not open a stream.");
+        if (!reader) throw new Error("Không mở được luồng phản hồi.");
         const decoder = new TextDecoder();
         let buf = "";
         let eventName = "message";
@@ -138,9 +139,10 @@ export async function askChatGPT(
               if (eventName === "done") done = payload;
               else if (eventName === "error") errText = payload;
               else if (eventName === "typing") onProgress?.("typing", payload);
-              else if (eventName === "prepare") onStatus?.("Đang chờ ô nhập của ChatGPT…");
+              else if (eventName === "prepare") onStatus?.("Đang chờ khung soạn thảo…");
               else if (eventName === "sending") onStatus?.("Đang gửi câu hỏi…");
-              else if (eventName === "thinking") onStatus?.("ChatGPT đang trả lời…");
+              else if (eventName === "thinking") onStatus?.("Đang chờ phản hồi…");
+              else if (eventName === "stall") onStatus?.("Tạm dừng do không phản hồi, đang tải lại…");
               else if (eventName === "ready") onStatus?.("Đã chuẩn bị xong, chờ trả lời…");
               else if (eventName !== "message") onProgress?.(eventName as ChatProgressStage, payload);
               eventName = "message";
@@ -150,7 +152,7 @@ export async function askChatGPT(
           if (errText) throw new Error(errText.replace(/^"|"$/g, ""));
         }
         if (done) return JSON.parse(done);
-        if (!done && !errText) throw new Error("Bridge stream ended without a reply.");
+        if (!done && !errText) throw new Error("Luồng phản hồi kết thúc mà không có câu trả lời.");
       } else if (res) {
         const data = await res.json().catch(() => ({}));
         if (res.ok) return (data.reply as string) ?? "";
@@ -158,14 +160,14 @@ export async function askChatGPT(
         throw new Error(err);
       }
     } catch {
-      onStatus?.("Cổng bridge bị ngắt giữa chừng, đang mở lại trình duyệt…");
+      onStatus?.("Không phản hồi được, đang mở lại phiên…");
       // If the bridge is still processing (busy) do NOT force-restart it — that would
       // kill a long-running generation mid-stream. Only restart when it's truly gone.
       await forceRestartBridgeIfDead(onStatus);
       await new Promise((r) => setTimeout(r, 2500));
     }
   }
-  throw new Error("Could not complete the chat after retries. Check that ChatGPT is open and logged in.");
+  throw new Error("Không hoàn tất được câu trả lời sau khi thử lại. Hãy kiểm tra cửa sổ AI đã đăng nhập chưa.");
 }
 
 async function forceRestartBridgeIfDead(onStatus?: (s: string) => void) {
@@ -173,7 +175,7 @@ async function forceRestartBridgeIfDead(onStatus?: (s: string) => void) {
   if (st && st.up && st.health?.composerReady) {
     // alive and ready → transient error, keep the session; don't kill the browser.
   } else {
-    onStatus?.("Đang khởi động lại phiên ChatGPT…");
+    onStatus?.("Đang khởi động lại phiên…");
     await fetch(`/api/bridge`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ force: true }) }).catch(() => {});
   }
 }

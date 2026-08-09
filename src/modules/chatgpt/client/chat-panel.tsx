@@ -201,7 +201,7 @@ export default function ChatPanel({ onOpenNav }: { onOpenNav?: () => void }) {
       );
     } catch (e) {
       clearInterval(elapsedTimer);
-      const msg = e instanceof Error ? e.message : "Could not reach ChatGPT";
+      const msg = e instanceof Error ? e.message : "Không kết nối được AI";
       const bridgeDown =
         /fetch failed|ECONNREFUSED|NetworkError|Failed to fetch|could not reach/i.test(msg);
       setMessages((prev) =>
@@ -212,8 +212,8 @@ export default function ChatPanel({ onOpenNav }: { onOpenNav?: () => void }) {
                 pending: false,
                 content: `⚠️ ${msg}\n\n${
                   bridgeDown
-                    ? "Bridge chưa chạy (cổng 3456 không kết nối được). Mở trình duyệt ChatGPT xong bắt đầu `npm run bridge`, rồi thử lại."
-                    : "Khởi động lại bridge nếu vẫn lỗi: npm run bridge"
+                    ? "AI chưa chạy (cổng kết nối không sẵn sàng). Mở cửa sổ AI rồi thử lại."
+                    : "Thử khởi động lại phiên AI nếu lỗi tiếp diễn."
                 }`,
               }
             : m,
