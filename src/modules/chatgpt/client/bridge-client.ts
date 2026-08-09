@@ -7,6 +7,13 @@ export type ChatMessage = {
   pending?: boolean;
 };
 
+export type ChatProgressStage =
+  | "ready"
+  | "prepare"
+  | "sending"
+  | "thinking"
+  | "typing";
+
 export type BridgeState = {
   port: number;
   up: boolean;
@@ -61,10 +68,13 @@ export async function bridgeEnsure(onStatus?: (s: string) => void): Promise<Brid
 
 // Bridge /chat itself warms up the composer, sends the prompt, waits for the reply.
 // This function guarantees the bridge is running + input ready, then sends — retries
-// if the port dies mid-flight.
+// if the port dies mid-flight. When `onProgress` is given we request the SSE stream
+// (`{ prompt, stream: true }`) so the UI sees live status + the reply appearing
+// as it types, instead of a hard-to-guess 3-minute wait with no feedback.
 export async function askChatGPT(
   prompt: string,
   onStatus?: (status: string) => void,
+  onProgress?: (stage: ChatProgressStage, detail?: string) => void,
 ): Promise<string> {
   let tries = 0;
   while (tries < 6) {
@@ -73,30 +83,97 @@ export async function askChatGPT(
     await bridgeEnsure(onStatus);
 
     try {
+      const stream = typeof onProgress === "function";
       const ctrl = new AbortController();
-      const idle = setTimeout(() => ctrl.abort(), 200000);
+      // REALTIME: with SSE the client stream keeps the request alive while the
+      // browser is active, so this is only a hard ceiling for a totally frozen bridge.
+      let idle: ReturnType<typeof setTimeout> | undefined;
+      const armIdle = (ms: number) => {
+        if (idle) clearTimeout(idle);
+        idle = setTimeout(() => ctrl.abort(), ms);
+      };
+      armIdle(60000);
       let res: Response | null = null;
       try {
         res = await fetch(`${BRIDGE_URL}/chat`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt }),
+          body: JSON.stringify(stream ? { prompt, stream: true } : { prompt }),
           signal: ctrl.signal,
         });
       } finally {
-        clearTimeout(idle);
+        if (idle) clearTimeout(idle);
       }
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) return (data.reply as string) ?? "";
-      const err = (data.error as string) || `Bridge error ${res.status}`;
-      // Business error (not logged in) — report immediately, no point retrying.
-      if (res.status >= 400 && res.status < 500 && res.status !== 408) throw new Error(err);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        const err = (data.error as string) || `Bridge error ${res.status}`;
+        if (res.status >= 400 && res.status < 500 && res.status !== 408) throw new Error(err);
+      }
+
+      if (stream && res) {
+        // SSE: incoming events → progress / done. Also refresh the abort window on
+        // every event so a long but alive generation is never killed.
+        let done = "";
+        let errText = "";
+        const reader = res.body?.getReader();
+        if (!reader) throw new Error("Bridge did not open a stream.");
+        const decoder = new TextDecoder();
+        let buf = "";
+        let eventName = "message";
+        while (true) {
+          const { done: end, value } = await reader.read();
+          if (end) break;
+          clearTimeout(idle);
+          armIdle(120000);
+          buf += decoder.decode(value, { stream: true });
+          const lines = buf.split("\n");
+          buf = lines.pop() ?? "";
+          for (const line of lines) {
+            const t = line.trim();
+            if (!t) continue;
+            if (t.startsWith(":")) continue; // keepalive comment
+            if (t.startsWith("event:")) { eventName = t.slice(6).trim(); continue; }
+            if (t.startsWith("data:")) {
+              const payload = t.slice(5).trim();
+              if (eventName === "done") done = payload;
+              else if (eventName === "error") errText = payload;
+              else if (eventName === "typing") onProgress?.("typing", payload);
+              else if (eventName === "prepare") onStatus?.("Đang chờ ô nhập của ChatGPT…");
+              else if (eventName === "sending") onStatus?.("Đang gửi câu hỏi…");
+              else if (eventName === "thinking") onStatus?.("ChatGPT đang trả lời…");
+              else if (eventName === "ready") onStatus?.("Đã chuẩn bị xong, chờ trả lời…");
+              else if (eventName !== "message") onProgress?.(eventName as ChatProgressStage, payload);
+              eventName = "message";
+            }
+          }
+          if (done) break;
+          if (errText) throw new Error(errText.replace(/^"|"$/g, ""));
+        }
+        if (done) return JSON.parse(done);
+        if (!done && !errText) throw new Error("Bridge stream ended without a reply.");
+      } else if (res) {
+        const data = await res.json().catch(() => ({}));
+        if (res.ok) return (data.reply as string) ?? "";
+        const err = (data.error as string) || `Bridge error ${res.status}`;
+        throw new Error(err);
+      }
     } catch {
       onStatus?.("Cổng bridge bị ngắt giữa chừng, đang mở lại trình duyệt…");
-      // Force-restart the bridge via the web server, then loop back and re-send.
-      await fetch(`/api/bridge`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ force: true }) }).catch(() => {});
+      // If the bridge is still processing (busy) do NOT force-restart it — that would
+      // kill a long-running generation mid-stream. Only restart when it's truly gone.
+      await forceRestartBridgeIfDead(onStatus);
       await new Promise((r) => setTimeout(r, 2500));
     }
   }
   throw new Error("Could not complete the chat after retries. Check that ChatGPT is open and logged in.");
+}
+
+async function forceRestartBridgeIfDead(onStatus?: (s: string) => void) {
+  const st = await fetch(`/api/bridge`).then((r) => r.json()).catch(() => null) as BridgeState | null;
+  if (st && st.up && st.health?.composerReady) {
+    // alive and ready → transient error, keep the session; don't kill the browser.
+  } else {
+    onStatus?.("Đang khởi động lại phiên ChatGPT…");
+    await fetch(`/api/bridge`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ force: true }) }).catch(() => {});
+  }
 }

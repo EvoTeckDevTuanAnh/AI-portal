@@ -175,11 +175,15 @@ async function stopBtnGone(p) {
   return c === 0;
 }
 
-async function waitForAnswer(p, before) {
+// ChatGPT returns the answer as a scrolling list of assistant bubbles. We wait for
+// N+1 bubbles (the +1 is our reply), re-reading the last one until its text stops
+// changing (streaming finished).
+async function waitForAnswer(p, before, onProgress) {
   const target = before + 1;
   let answer = "";
   let stable = 0;
   const deadline = Date.now() + 150 * 1000;
+  let lastReport = 0;
   while (Date.now() < deadline) {
     const count = await p.locator(LAST_ASSISTANT).count();
     if (count >= target) {
@@ -187,6 +191,12 @@ async function waitForAnswer(p, before) {
       if (text.trim()) {
         if (text === answer) stable += 1;
         else { answer = text; stable = 0; }
+        // report growing answer every ~1s so the UI shows the reply appearing
+        const now = Date.now();
+        if (now - lastReport > 1000) {
+          lastReport = now;
+          onProgress?.("typing", answer);
+        }
       }
     }
     const stopGone = await stopBtnGone(p);
@@ -196,20 +206,24 @@ async function waitForAnswer(p, before) {
   return answer.trim() ? answer : "";
 }
 
-async function chat(prompt) {
+async function chat(prompt, onProgress) {
   let lastErr = "";
   // One retry with a full browser relaunch covers the case where the browser window
   // was closed (and reopened by the user) while the bridge still held a dead session.
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
+      onProgress?.("ready", "Đang chuẩn bị trình duyệt…");
       const p = await getChatPage();
+      onProgress?.("prepare", "Đang chờ ô nhập của ChatGPT…");
       const ready = await ensureComposer(p, 120 * 1000);
       if (!ready) throw new Error("Not logged in / ChatGPT composer not found. Log in in the open browser window, then try again.");
       if (!pageAlive(p)) throw new Error("Chat tab was closed while preparing.");
+      onProgress?.("sending", "Đang gửi câu hỏi…");
       const before = await p.locator(LAST_ASSISTANT).count();
       await setPrompt(p, prompt);
       await p.keyboard.press("Enter");
-      const answer = await waitForAnswer(p, before);
+      onProgress?.("thinking", "ChatGPT đang trả lời…");
+      const answer = await waitForAnswer(p, before, onProgress);
       if (answer) return answer;
       throw new Error("No completion received from ChatGPT in time.");
     } catch (e) {
@@ -231,16 +245,33 @@ function pump() {
   if (!job) return;
   busy = true;
   log(">> chat:", job.prompt);
-  chat(job.prompt)
+  const onProgress = job.stream
+    ? (stage, detail) => {
+        try {
+          job.res.write(`event: ${stage}\ndata: ${JSON.stringify(detail ?? "")}\n\n`);
+        } catch {}
+      }
+    : undefined;
+  chat(job.prompt, onProgress)
     .then((reply) => {
       log("<< done:", reply.slice(0, 50));
-      job.res.writeHead(200, { "Content-Type": "application/json" });
-      job.res.end(JSON.stringify({ ok: true, reply }));
+      if (job.stream) {
+        job.res.write(`event: done\ndata: ${JSON.stringify(reply)}\n\n`);
+        job.res.end();
+      } else {
+        job.res.writeHead(200, { "Content-Type": "application/json" });
+        job.res.end(JSON.stringify({ ok: true, reply }));
+      }
     })
     .catch((e) => {
       log("!! error:", e.message);
-      job.res.writeHead(500, { "Content-Type": "application/json" });
-      job.res.end(JSON.stringify({ ok: false, error: e.message }));
+      if (job.stream) {
+        job.res.write(`event: error\ndata: ${JSON.stringify(e.message)}\n\n`);
+        job.res.end();
+      } else {
+        job.res.writeHead(500, { "Content-Type": "application/json" });
+        job.res.end(JSON.stringify({ ok: false, error: e.message }));
+      }
     })
     .finally(() => { busy = false; setImmediate(pump); });
 }
@@ -279,12 +310,26 @@ const server = http.createServer(async (req, res) => {
     req.on("data", (c) => (body += c));
     req.on("end", () => {
       let prompt = "";
-      try { prompt = (JSON.parse(body || "{}").prompt || "").toString(); } catch {}
+      let stream = false;
+      try {
+        const parsed = JSON.parse(body || "{}");
+        prompt = (parsed.prompt || "").toString();
+        stream = !!parsed.stream;
+      } catch {}
       if (!prompt.trim()) {
         res.writeHead(400, { "Content-Type": "application/json" });
         return res.end(JSON.stringify({ ok: false, error: "prompt is required" }));
       }
-      queue.push({ prompt, res });
+      if (stream) {
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+          "X-Accel-Buffering": "no",
+        });
+        res.write(": ok\n\n"); // keepalive comment so proxies don't buffer
+      }
+      queue.push({ prompt, res, stream });
       pump();
     });
     return;

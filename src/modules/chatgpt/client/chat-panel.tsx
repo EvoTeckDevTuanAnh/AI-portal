@@ -123,11 +123,18 @@ const PROMPTS = {
 
 let nextId = 1;
 
+function formatTime(s: number) {
+  return `${Math.floor(s / 60)}:${`${s % 60}`.padStart(2, "0")}`;
+}
+
 export default function ChatPanel({ onOpenNav }: { onOpenNav?: () => void }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
+  const [statusText, setStatusText] = useState("");
+  const [typingPreview, setTypingPreview] = useState("");
+  const [elapsed, setElapsed] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
 
@@ -175,16 +182,25 @@ export default function ChatPanel({ onOpenNav }: { onOpenNav?: () => void }) {
     setDraft("");
     setAtBottom(true);
     setSending(true);
+    setStatusText("");
+    setTypingPreview("");
+    setElapsed(0);
+    const startedAt = Date.now();
+    const elapsedTimer = setInterval(() => setElapsed(Math.round((Date.now() - startedAt) / 1000)), 500);
     try {
-      const reply = await askChatGPT(text, (status) =>
-        setMessages((prev) =>
-          prev.map((m) => (m.id === assistantId ? { ...m, content: status } : m)),
-        ),
+      const reply = await askChatGPT(
+        text,
+        (status) => setStatusText(status),
+        (stage, detail) => {
+          if (stage === "typing" && detail) setTypingPreview(detail);
+        },
       );
+      clearInterval(elapsedTimer);
       setMessages((prev) =>
         prev.map((m) => (m.id === assistantId ? { ...m, pending: false, content: reply } : m)),
       );
     } catch (e) {
+      clearInterval(elapsedTimer);
       const msg = e instanceof Error ? e.message : "Could not reach ChatGPT";
       const bridgeDown =
         /fetch failed|ECONNREFUSED|NetworkError|Failed to fetch|could not reach/i.test(msg);
@@ -205,6 +221,9 @@ export default function ChatPanel({ onOpenNav }: { onOpenNav?: () => void }) {
       );
     } finally {
       setSending(false);
+      setStatusText("");
+      setTypingPreview("");
+      setElapsed(0);
     }
     textareaRef.current?.focus();
   };
@@ -330,11 +349,23 @@ export default function ChatPanel({ onOpenNav }: { onOpenNav?: () => void }) {
                     {m.content}
                   </p>
                   {m.pending && (
-                    <span className="mt-1.5 flex items-center gap-1">
-                      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-ink-faint [animation-delay:0ms]" />
-                      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-ink-faint [animation-delay:150ms]" />
-                      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-ink-faint [animation-delay:300ms]" />
-                    </span>
+                    <div className="mt-1.5 space-y-1">
+                      {statusText && (
+                        <p className="text-xs text-ink-faint">
+                          {statusText} <span className="tabular-nums">({formatTime(elapsed)})</span>
+                        </p>
+                      )}
+                      {typingPreview && (
+                        <p className="whitespace-pre-wrap text-sm italic leading-relaxed text-ink-muted">
+                          {typingPreview}▍
+                        </p>
+                      )}
+                      <span className="flex items-center gap-1">
+                        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-ink-faint [animation-delay:0ms]" />
+                        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-ink-faint [animation-delay:150ms]" />
+                        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-ink-faint [animation-delay:300ms]" />
+                      </span>
+                    </div>
                   )}
                 </div>
               </div>
