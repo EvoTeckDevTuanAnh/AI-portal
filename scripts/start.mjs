@@ -98,9 +98,9 @@ function clearNextCache() {
     spawn("node", [path.join("src", "modules", "chatgpt", "server", "bridge.mjs")], { cwd: root, stdio: "inherit", windowsHide: true });
   }
 
-  // 3. Web app — now with a free, clean .next, start exactly one dev server.
-  const web = spawn("npm", ["run", "dev"], { cwd: root, stdio: "inherit", windowsHide: true, shell: true });
-  web.on("exit", (code) => log(`next dev exited with code ${code}`));
+  // 3. Web app — custom server.mjs serves Next.js AND the /ws heartbeat loop.
+  const web = spawn("node", ["server.mjs"], { cwd: root, stdio: "inherit", windowsHide: true });
+  web.on("exit", (code) => log(`server.mjs (Next.js + WS) exited with code ${code}`));
 
   const gotWeb = await waitForReady(WEB_PORT, 60, "Web app");
   const gotBridge = await waitForReady(BRIDGE_PORT, 120, "Bridge");

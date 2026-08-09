@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node server.mjs",
     "build": "next build",
-    "start": "next start",
+    "start": "node server.mjs",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "bridge": "node src/modules/chatgpt/server/bridge.mjs",
@@ -14,15 +14,19 @@
   },
   "dependencies": {
     "next": "^15.1.6",
+    "pg": "^8.23.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.6",
     "@tailwindcss/postcss": "^4.0.0",
     "@types/node": "^22.10.0",
+    "@types/pg": "^8.21.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "@types/ws": "^8.18.1",
     "eslint": "^9.39.5",
     "eslint-config-next": "^15.5.23",
     "playwright": "^1.62.1",
