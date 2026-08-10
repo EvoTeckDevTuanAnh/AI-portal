@@ -1,122 +1,145 @@
-// AI-Portal launcher: single entry point. Guarantees exactly ONE bridge and ONE
-// web dev server. Kills stale/orphaned "next dev" instances from this project and
-// clears a corrupt `.next` before starting, so two dev servers can never race on
-// the same `.next` directory (the cause of 404/ENOENT asset errors).
+// Single-instance AI-Portal launcher for Windows and local development.
 import net from "node:net";
 import fs from "node:fs";
-import { spawn, execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const root = path.resolve(__dirname, "..");
-
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BRIDGE_PORT = Number(process.env.BRIDGE_PORT || 3456);
 const WEB_PORT = Number(process.env.WEB_PORT || 3000);
+const LOCK_PATH = path.join(root, ".ai-portal.start.lock");
 
-const NEXT_MARKERS = ["next","dist\\bin\\next","\\next\\dev","bridge.mjs"];
-
-function log(...a) { console.log(new Date().toISOString(), ...a); }
+function log(...args) { console.log(new Date().toISOString(), ...args); }
 
 function isListening(port, host = "127.0.0.1", timeout = 1200) {
   return new Promise((resolve) => {
-    const s = net.connect({ port, host });
-    const done = (ok) => { s.destroy(); resolve(ok); };
-    s.setTimeout(timeout, () => done(false));
-    s.once("connect", () => done(true));
-    s.once("timeout", () => done(false));
-    s.once("error", () => done(false));
+    const socket = net.connect({ port, host });
+    const done = (value) => { socket.destroy(); resolve(value); };
+    socket.setTimeout(timeout, () => done(false));
+    socket.once("connect", () => done(true));
+    socket.once("error", () => done(false));
   });
 }
 
 async function waitForReady(port, tries, label) {
-  for (let i = 0; i < tries; i++) {
+  for (let i = 0; i < tries; i += 1) {
     if (await isListening(port)) {
       log(`${label} ready on :${port}`);
       return true;
     }
-    await new Promise((r) => setTimeout(r, 700));
+    await new Promise((resolve) => setTimeout(resolve, 700));
   }
   return false;
 }
 
-// Kill stale net filter. Enumerate node.exe, keep the bridge, kill next-dev chains
-// that belong to this project.
-function listNodeProcs() {
-  return new Promise((resolve, reject) => {
-    execFile("wmic", ["process", "where", "Name='node.exe'", "get", "ProcessId,CommandLine", "/format:csv"],
-      { windowsHide: true }, (err, stdout) => {
-        if (err) return reject(err);
-        const rows = [];
-        for (const line of (stdout || "").split(/\r?\n/)) {
-          if (!line || !line.includes(",")) continue;
-          const m = line.match(/(\d+)\s*$/);
-          const cmd = line.split(",").slice(1, -1).join(",");
-          if (!m) continue;
-          rows.push({ pid: Number(m[1]), cmd });
-        }
-        resolve(rows);
-      });
-  });
+function acquireLauncherLock() {
+  try {
+    const fd = fs.openSync(LOCK_PATH, "wx");
+    fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
+    fs.closeSync(fd);
+    return true;
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+    try {
+      const record = JSON.parse(fs.readFileSync(LOCK_PATH, "utf8"));
+      process.kill(Number(record.pid), 0);
+      log(`Already running (launcher pid ${record.pid}); duplicate start ignored.`);
+      return false;
+    } catch {
+      try { fs.rmSync(LOCK_PATH, { force: true }); } catch {}
+      return acquireLauncherLock();
+    }
+  }
 }
 
-function killStaleDevServers() {
-  return new Promise((resolve, reject) => {
-    listNodeProcs().then((rows) => {
-      const stale = rows.filter((r) =>
-        r.cmd.includes("next") &&
-        (r.cmd.includes("next dev") || r.cmd.includes("next\\dev") || r.cmd.includes("start-server.js")) &&
-        r.cmd.includes("AI-portal") &&
-        !r.cmd.includes("bridge.mjs")
-      );
-      if (stale.length === 0) { log("No stale dev server found."); return resolve([]); }
-      for (const s of stale) {
-        try { process.kill(s.pid); log(`Killed stale dev server (pid ${s.pid})`); } catch {}
-      }
-      setTimeout(resolve, 800, stale);
-    }, () => resolve([]));
-  });
+function releaseLauncherLock() {
+  try {
+    const record = JSON.parse(fs.readFileSync(LOCK_PATH, "utf8"));
+    if (Number(record.pid) === process.pid) fs.rmSync(LOCK_PATH, { force: true });
+  } catch {}
 }
 
 function clearNextCache() {
-  const dir = path.join(root, ".next");
-  if (!fs.existsSync(dir)) { log("No .next cache to clear."); return; }
-  try { fs.rmSync(dir, { recursive: true, force: true }); log("Cleared corrupt .next"); }
-  catch (e) { log("WARN: could not clear .next:", e.message); }
+  const nextDir = path.join(root, ".next");
+  if (!fs.existsSync(nextDir)) return;
+  try {
+    fs.rmSync(nextDir, { recursive: true, force: true });
+    log("Cleared .next cache");
+  } catch (error) {
+    log("WARN: could not clear .next:", error.message);
+  }
 }
 
 (async () => {
-  // 1. Never let two dev servers write the same .next.
-  await killStaleDevServers();
-  clearNextCache();
+  if (!acquireLauncherLock()) return;
+  process.on("exit", releaseLauncherLock);
 
-  // 2. Bridge (keep running instance, else start one).
+  const webAlreadyUp = await isListening(WEB_PORT);
+  if (!webAlreadyUp) clearNextCache();
+
   if (await isListening(BRIDGE_PORT)) {
-    log(`Bridge already running on :${BRIDGE_PORT} — reusing it.`);
+    log(`Bridge already running on :${BRIDGE_PORT}; reusing it.`);
   } else {
     log(`Starting bridge on :${BRIDGE_PORT}...`);
-    spawn("node", [path.join("src", "modules", "chatgpt", "server", "bridge.mjs")], { cwd: root, stdio: "inherit", windowsHide: true });
+    const bridge = spawn(process.execPath, [path.join(root, "src", "modules", "chatgpt", "server", "bridge.mjs")], {
+      cwd: root, stdio: "inherit", windowsHide: true,
+    });
+    bridge.once("error", (error) => {
+      log("FATAL bridge start:", error.message);
+      releaseLauncherLock();
+      process.exit(1);
+    });
+    bridge.once("exit", (code) => {
+      if (code !== 0) {
+        log(`bridge exited with code ${code}`);
+        releaseLauncherLock();
+        process.exit(code || 1);
+      }
+    });
   }
 
-  // 3. Web app — custom server.mjs serves Next.js AND the /ws heartbeat loop.
-  const web = spawn("node", ["server.mjs"], { cwd: root, stdio: "inherit", windowsHide: true });
-  web.on("exit", (code) => log(`server.mjs (Next.js + WS) exited with code ${code}`));
+  let webReady = false;
+  const web = webAlreadyUp ? null : spawn(process.execPath, [path.join(root, "server.mjs")], {
+    cwd: root, stdio: "inherit", windowsHide: true,
+  });
+  if (web) {
+    web.once("error", (error) => {
+      log("FATAL web start:", error.message);
+      releaseLauncherLock();
+      process.exit(1);
+    });
+    web.on("exit", (code) => {
+      log(`server.mjs exited with code ${code}`);
+      if (!webReady) log("FATAL: web app exited before becoming ready.");
+      releaseLauncherLock();
+      process.exit(code || 1);
+    });
+  } else {
+    log(`Web app already running on :${WEB_PORT}; reusing it.`);
+  }
 
   const gotWeb = await waitForReady(WEB_PORT, 60, "Web app");
+  webReady = gotWeb;
   const gotBridge = await waitForReady(BRIDGE_PORT, 120, "Bridge");
   if (!gotWeb) log("WARN: web app did not become reachable in time.");
-  if (!gotBridge) log("WARN: bridge did not become reachable in time (is ChatGPT logged in?).");
+  if (!gotBridge) log("WARN: bridge did not become reachable in time.");
 
   if (process.env.OPEN_BROWSER !== "0") {
-    try {
-      spawn("cmd", ["/c", "start", `http://localhost:${WEB_PORT}`], { cwd: root, windowsHide: true, shell: false });
-      log(`Opening browser at http://localhost:${WEB_PORT}`);
-    } catch (e) {
-      log("WARN: could not open browser:", e.message);
-    }
+    const browser = spawn("cmd.exe", ["/c", "start", "", `http://localhost:${WEB_PORT}`], {
+      cwd: root, windowsHide: true, shell: false,
+    });
+    browser.once("error", (error) => log("WARN: could not open browser:", error.message));
   }
 
-  const shutdown = () => { try { web.kill(); } catch {} };
+  const shutdown = () => {
+    try { web?.kill(); } catch {}
+    releaseLauncherLock();
+  };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
-})().catch((e) => { log("FATAL start:", e.message); process.exit(1); });
+})().catch((error) => {
+  log("FATAL start:", error.message);
+  releaseLauncherLock();
+  process.exit(1);
+});

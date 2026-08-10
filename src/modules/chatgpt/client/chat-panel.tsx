@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { askChatGPT, type ChatMessage } from "@/modules/chatgpt/client/bridge-client";
+import { listenVietnamese, speakVietnamese } from "@/modules/chatgpt/client/voice";
 
 function MenuIcon() {
   return (
@@ -114,6 +115,15 @@ type Action = {
   fg: string;
 };
 
+type ConversationSummary = {
+  id: number;
+  title: string;
+  status: "active" | "archived";
+  updated_at: string;
+  message_count: number;
+  external_conversation_id: string | null;
+};
+
 const PROMPTS = {
   copy: "Help me write marketing copy for my new SaaS product called \"Orbit\".",
   image: "Generate a hero image concept for a fintech dashboard, clean and minimal.",
@@ -129,6 +139,11 @@ function formatTime(s: number) {
 
 export default function ChatPanel({ onOpenNav }: { onOpenNav?: () => void }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [conversationId, setConversationId] = useState<number | null>(null);
+  const [externalConversationId, setExternalConversationId] = useState("");
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [listening, setListening] = useState(false);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
@@ -140,6 +155,30 @@ export default function ChatPanel({ onOpenNav }: { onOpenNav?: () => void }) {
 
   const trimmed = draft.trim();
   const charCount = draft.length;
+
+  const loadConversations = useCallback(async () => {
+    const response = await fetch("/api/conversations");
+    if (response.ok) setConversations(await response.json());
+  }, []);
+
+  useEffect(() => { void loadConversations(); }, [loadConversations]);
+
+  const startNewConversation = () => {
+    setConversationId(null);
+    setExternalConversationId("");
+    setMessages([]);
+    setHistoryOpen(false);
+  };
+
+  const openConversation = async (id: number) => {
+    const response = await fetch(`/api/conversations/${id}`);
+    if (!response.ok) return;
+    const data = await response.json();
+    setConversationId(id);
+    setExternalConversationId(data.conversation.external_conversation_id ?? "");
+    setMessages(data.messages.map((message: { id: number; role: ChatMessage["role"]; content: string }) => ({ id: message.id, role: message.role, content: message.content })));
+    setHistoryOpen(false);
+  };
 
   const actions: Action[] = [
     { title: "Write copy", prompt: PROMPTS.copy, icon: <EditIcon />, bg: "bg-blue-50", fg: "text-blue-600" },
@@ -169,9 +208,26 @@ export default function ChatPanel({ onOpenNav }: { onOpenNav?: () => void }) {
     if (el && atBottom) el.scrollTop = el.scrollHeight;
   }, [messages, atBottom]);
 
-  const sendMessage = async () => {
-    const text = trimmed;
+  const sendMessage = async (voicePrompt?: string) => {
+    const text = (voicePrompt ?? draft).trim();
     if (!text) return;
+    let activeConversationId = conversationId;
+    try {
+      if (!activeConversationId) {
+        const created = await fetch("/api/conversations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: text, external_conversation_id: externalConversationId.trim() || null }) });
+        if (!created.ok) throw new Error("Không tạo được cuộc trò chuyện");
+        const createdConversation = await created.json();
+        activeConversationId = createdConversation.id as number;
+        setExternalConversationId(createdConversation.external_conversation_id ?? "");
+        setConversationId(activeConversationId);
+      }
+      const savedUser = await fetch(`/api/conversations/${activeConversationId}/messages`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ role: "user", content: text, status: "completed" }) });
+      if (!savedUser.ok) throw new Error("Không lưu được tin nhắn");
+    } catch (error) {
+      setStatusText(error instanceof Error ? error.message : "Không lưu được cuộc trò chuyện");
+      return;
+    }
+    await loadConversations();
     const userMsg = { id: nextId++, role: "user", content: text } as ChatMessage;
     const assistantId = nextId++;
     setMessages((prev) => [
@@ -194,11 +250,15 @@ export default function ChatPanel({ onOpenNav }: { onOpenNav?: () => void }) {
         (stage, detail) => {
           if (stage === "typing" && detail) setTypingPreview(detail);
         },
+        externalConversationId.trim() || null,
       );
       clearInterval(elapsedTimer);
       setMessages((prev) =>
         prev.map((m) => (m.id === assistantId ? { ...m, pending: false, content: reply } : m)),
       );
+      await fetch(`/api/conversations/${activeConversationId}/messages`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ role: "assistant", content: reply, status: "completed" }) });
+      speakVietnamese(reply);
+      await loadConversations();
     } catch (e) {
       clearInterval(elapsedTimer);
       const msg = e instanceof Error ? e.message : "Không kết nối được AI";
@@ -219,6 +279,8 @@ export default function ChatPanel({ onOpenNav }: { onOpenNav?: () => void }) {
             : m,
         ),
       );
+      const failure = e instanceof Error ? e.message : "Không kết nối được AI";
+      await fetch(`/api/conversations/${activeConversationId}/messages`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ role: "assistant", content: `⚠️ ${failure}`, status: "failed" }) }).catch(() => {});
     } finally {
       setSending(false);
       setStatusText("");
@@ -226,6 +288,21 @@ export default function ChatPanel({ onOpenNav }: { onOpenNav?: () => void }) {
       setElapsed(0);
     }
     textareaRef.current?.focus();
+  };
+
+  const handleVoiceMessage = async () => {
+    if (sending || listening) return;
+    try {
+      const transcript = await listenVietnamese(setListening);
+      if (transcript) {
+        setDraft(transcript);
+        await sendMessage(transcript);
+      }
+    } catch (error) {
+      setStatusText(error instanceof Error ? error.message : "Không nhận diện được giọng nói");
+    } finally {
+      setListening(false);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -252,7 +329,7 @@ export default function ChatPanel({ onOpenNav }: { onOpenNav?: () => void }) {
   return (
     <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-surface">
       {/* Header */}
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-line bg-card px-5">
+      <header className="relative flex h-14 shrink-0 items-center gap-2 border-b border-line bg-card px-5">
         <button
           type="button"
           onClick={onOpenNav}
@@ -264,6 +341,21 @@ export default function ChatPanel({ onOpenNav }: { onOpenNav?: () => void }) {
         <h1 className="text-sm font-semibold text-ink">AI Chat</h1>
 
         <div className="flex-1" />
+
+        <button
+          type="button"
+          onClick={() => setHistoryOpen((open) => !open)}
+          className="flex h-8 items-center rounded-[8px] border border-line px-3 text-[12px] font-medium text-ink-muted hover:bg-gray-50 hover:text-ink"
+        >
+          History{conversations.length ? ` (${conversations.length})` : ""}
+        </button>
+        <button
+          type="button"
+          onClick={startNewConversation}
+          className="flex h-8 items-center rounded-[8px] border border-line px-3 text-[12px] font-medium text-ink-muted hover:bg-gray-50 hover:text-ink"
+        >
+          New chat
+        </button>
 
         <button
           type="button"
@@ -287,6 +379,36 @@ export default function ChatPanel({ onOpenNav }: { onOpenNav?: () => void }) {
         >
           <BellIcon />
         </button>
+
+        {historyOpen && (
+          <div className="absolute right-5 top-12 z-30 w-80 rounded-xl border border-line bg-card p-2 shadow-lg">
+            <div className="flex items-center justify-between px-2 py-1.5">
+              <span className="text-xs font-semibold text-ink">Recent chats</span>
+              <button type="button" onClick={startNewConversation} className="text-[11px] text-ink-faint hover:text-ink">New chat</button>
+            </div>
+            <label className="block px-2 pb-2 text-[11px] text-ink-faint">
+              ChatGPT conversation URL/ID
+              <input
+                value={externalConversationId}
+                onChange={(event) => setExternalConversationId(event.target.value)}
+                placeholder="https://chatgpt.com/c/..."
+                className="mt-1 w-full rounded-md border border-line px-2 py-1.5 text-xs text-ink outline-none focus:border-line-strong"
+              />
+            </label>
+            {conversations.length === 0 ? (
+              <p className="px-2 py-4 text-xs text-ink-faint">No saved conversations.</p>
+            ) : (
+              <div className="max-h-72 overflow-y-auto">
+                {conversations.map((conversation) => (
+                  <button key={conversation.id} type="button" onClick={() => void openConversation(conversation.id)} className={`flex w-full flex-col items-start rounded-lg px-2 py-2 text-left hover:bg-gray-50 ${conversation.id === conversationId ? "bg-gray-50" : ""}`}>
+                    <span className="w-full truncate text-xs font-medium text-ink">{conversation.title}</span>
+                    <span className="text-[11px] text-ink-faint">{conversation.message_count} messages</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </header>
 
       {/* Thread */}
@@ -410,9 +532,10 @@ export default function ChatPanel({ onOpenNav }: { onOpenNav?: () => void }) {
             </button>
             <button
               type="button"
+              onClick={() => void handleVoiceMessage()}
               aria-label="Voice message"
               title="Voice message"
-              className="flex h-8 w-8 items-center justify-center rounded-[8px] text-ink-muted hover:bg-gray-100 hover:text-ink"
+              className={`flex h-8 w-8 items-center justify-center rounded-[8px] ${listening ? "bg-red-50 text-red-600" : "text-ink-muted hover:bg-gray-100 hover:text-ink"}`}
             >
               <MicIcon />
             </button>
