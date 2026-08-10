@@ -34,6 +34,7 @@ next-env.d.ts
 AI-Portal.exe
 .ai-portal.start.lock
 *.log
+AI-Portal-launcher.log
 
 # dev session logs
 conversations/

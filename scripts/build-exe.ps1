@@ -9,13 +9,19 @@ using System.Threading;
 
 class Launcher
 {
+    static void Log(string logPath, string message)
+    {
+        File.AppendAllText(logPath, DateTime.Now.ToString("s") + " " + message + Environment.NewLine);
+    }
+
     static int Main()
     {
         string project = AppDomain.CurrentDomain.BaseDirectory;
+        string logPath = Path.Combine(project, "AI-Portal-launcher.log");
+        Log(logPath, "Launcher started: " + project);
         if (!File.Exists(Path.Combine(project, "package.json")))
         {
-            Console.WriteLine("[ERROR] AI-Portal.exe must be placed in the project folder.");
-            Console.ReadLine();
+            Log(logPath, "ERROR: package.json was not found. Place AI-Portal.exe in the project folder.");
             return 1;
         }
 
@@ -33,26 +39,31 @@ class Launcher
             {
                 var psi = new ProcessStartInfo
                 {
-                    FileName = "npm.cmd",
-                    Arguments = "run start:all",
+                    FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe",
+                    Arguments = "/d /c \"set NODE_ENV=production&& set NEXT_TELEMETRY_DISABLED=1&& npm.cmd run start:all\"",
                     WorkingDirectory = project,
                     UseShellExecute = false,
-                    CreateNoWindow = true
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
                 };
                 Process process = Process.Start(psi);
                 if (process == null)
                 {
-                    Console.WriteLine("[ERROR] Could not start AI-Portal. Make sure Node.js is installed.");
-                    Console.ReadLine();
+                    Log(logPath, "ERROR: Process.Start returned null.");
                     return 1;
                 }
+                process.OutputDataReceived += (sender, e) => { if (e.Data != null) Log(logPath, "OUT " + e.Data); };
+                process.ErrorDataReceived += (sender, e) => { if (e.Data != null) Log(logPath, "ERR " + e.Data); };
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
                 process.WaitForExit();
+                Log(logPath, "Launcher child exited: " + process.ExitCode);
                 return process.ExitCode;
             }
             catch (Exception ex)
             {
-                Console.WriteLine("[ERROR] " + ex.Message + "\n\nIs Node.js installed?\nGet it at https://nodejs.org");
-                Console.ReadLine();
+                Log(logPath, "ERROR: " + ex);
                 return 1;
             }
         }

@@ -76,7 +76,7 @@ function clearNextCache() {
   process.on("exit", releaseLauncherLock);
 
   const webAlreadyUp = await isListening(WEB_PORT);
-  if (!webAlreadyUp) clearNextCache();
+  if (!webAlreadyUp && process.env.NODE_ENV !== "production") clearNextCache();
 
   if (await isListening(BRIDGE_PORT)) {
     log(`Bridge already running on :${BRIDGE_PORT}; reusing it.`);
