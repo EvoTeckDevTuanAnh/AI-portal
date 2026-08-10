@@ -137,7 +137,8 @@ function formatTime(s: number) {
   return `${Math.floor(s / 60)}:${`${s % 60}`.padStart(2, "0")}`;
 }
 
-export default function ChatPanel({ onOpenNav }: { onOpenNav?: () => void }) {
+export default function ChatPanel({ onOpenNav, variant = "page" }: { onOpenNav?: () => void; variant?: "page" | "widget" }) {
+  const isWidget = variant === "widget";
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [conversationId, setConversationId] = useState<number | null>(null);
   const [externalConversationId, setExternalConversationId] = useState("");
@@ -327,9 +328,9 @@ export default function ChatPanel({ onOpenNav }: { onOpenNav?: () => void }) {
   };
 
   return (
-    <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-surface">
+    <main className={`flex min-w-0 flex-1 flex-col overflow-hidden bg-surface ${variant === "widget" ? "h-full w-full" : ""}`}>
       {/* Header */}
-      <header className="relative flex h-14 shrink-0 items-center gap-2 border-b border-line bg-card px-5">
+      <header className={`relative flex shrink-0 items-center gap-2 border-b border-line bg-card ${isWidget ? "h-12 px-3" : "h-14 px-5"}`}>
         <button
           type="button"
           onClick={onOpenNav}
@@ -345,21 +346,21 @@ export default function ChatPanel({ onOpenNav }: { onOpenNav?: () => void }) {
         <button
           type="button"
           onClick={() => setHistoryOpen((open) => !open)}
-          className="flex h-8 items-center rounded-[8px] border border-line px-3 text-[12px] font-medium text-ink-muted hover:bg-gray-50 hover:text-ink"
+          className={`flex h-8 items-center rounded-[8px] border border-line px-3 text-[12px] font-medium text-ink-muted hover:bg-gray-50 hover:text-ink ${isWidget ? "px-2" : "px-3"}`}
         >
           History{conversations.length ? ` (${conversations.length})` : ""}
         </button>
         <button
           type="button"
           onClick={startNewConversation}
-          className="flex h-8 items-center rounded-[8px] border border-line px-3 text-[12px] font-medium text-ink-muted hover:bg-gray-50 hover:text-ink"
+          className={`flex h-8 items-center rounded-[8px] border border-line px-3 text-[12px] font-medium text-ink-muted hover:bg-gray-50 hover:text-ink ${isWidget ? "px-2" : "px-3"}`}
         >
           New chat
         </button>
 
         <button
           type="button"
-          className="flex h-8 items-center gap-1.5 rounded-[8px] bg-ink px-3 text-[13px] font-medium text-card transition-opacity hover:opacity-90"
+          className={`flex h-8 items-center gap-1.5 rounded-[8px] bg-ink px-3 text-[13px] font-medium text-card transition-opacity hover:opacity-90 ${isWidget ? "hidden" : ""}`}
         >
           <UpIcon />
           Upgrade
@@ -368,14 +369,14 @@ export default function ChatPanel({ onOpenNav }: { onOpenNav?: () => void }) {
         <button
           type="button"
           aria-label="Search"
-          className="flex h-8 w-8 items-center justify-center rounded-[8px] text-ink-muted hover:bg-gray-100 hover:text-ink"
+          className={`flex h-8 w-8 items-center justify-center rounded-[8px] text-ink-muted hover:bg-gray-100 hover:text-ink ${isWidget ? "hidden" : ""}`}
         >
           <SearchIcon />
         </button>
         <button
           type="button"
           aria-label="Notifications"
-          className="flex h-8 w-8 items-center justify-center rounded-[8px] text-ink-muted hover:bg-gray-100 hover:text-ink"
+          className={`flex h-8 w-8 items-center justify-center rounded-[8px] text-ink-muted hover:bg-gray-100 hover:text-ink ${isWidget ? "hidden" : ""}`}
         >
           <BellIcon />
         </button>
@@ -414,25 +415,25 @@ export default function ChatPanel({ onOpenNav }: { onOpenNav?: () => void }) {
       {/* Thread */}
       <div ref={threadRef} onScroll={handleScroll} className="relative flex-1 overflow-y-auto">
         {messages.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center px-8 pt-6 pb-10">
-            <div className="flex w-full max-w-lg flex-col items-center -mt-16">
-              <span className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-ink text-lg font-semibold text-card">
+          <div className={`flex h-full flex-col items-center justify-center ${isWidget ? "px-4 py-5" : "px-8 pt-6 pb-10"}`}>
+            <div className={`flex w-full flex-col items-center ${isWidget ? "max-w-sm" : "-mt-16 max-w-lg"}`}>
+              <span className={`flex items-center justify-center rounded-xl bg-ink font-semibold text-card ${isWidget ? "mb-3 h-10 w-10 text-base" : "mb-5 h-12 w-12 text-lg"}`}>
                 AI
               </span>
-              <h2 className="text-center text-2xl font-semibold tracking-tight text-ink">
+              <h2 className={`${isWidget ? "text-lg" : "text-2xl"} text-center font-semibold tracking-tight text-ink`}>
                 Welcome to AI Portal
               </h2>
-              <p className="mt-2 text-center text-sm text-ink-muted">
+              <p className={`${isWidget ? "text-xs" : "text-sm"} mt-2 text-center text-ink-muted`}>
                 Ask anything, create anything. Your copilot for ideas, content
                 and code.
               </p>
-              <div className="mt-8 grid w-full grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className={`${isWidget ? "mt-5 gap-2" : "mt-8 gap-3"} grid w-full grid-cols-1 sm:grid-cols-2`}>
                 {actions.map((action) => (
                   <button
                     key={action.title}
                     type="button"
                     onClick={() => applyPrompt(action.prompt)}
-                    className="group flex items-center gap-3 rounded-[10px] border border-line bg-card px-4 py-3.5 text-left transition-colors hover:bg-gray-50"
+                    className={`group flex items-center gap-3 rounded-[10px] border border-line bg-card text-left transition-colors hover:bg-gray-50 ${isWidget ? "px-3 py-2.5" : "px-4 py-3.5"}`}
                   >
                     <span
                       className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${action.bg} ${action.fg}`}
@@ -509,7 +510,7 @@ export default function ChatPanel({ onOpenNav }: { onOpenNav?: () => void }) {
       </div>
 
       {/* Composer */}
-      <div className="shrink-0 px-6 pb-5">
+      <div className={`shrink-0 ${isWidget ? "px-3 pb-3" : "px-6 pb-5"}`}>
         <div className="mx-auto flex w-full max-w-[760px] flex-col rounded-2xl border border-line bg-card p-2.5 focus-within:border-line-strong">
           <textarea
             ref={textareaRef}

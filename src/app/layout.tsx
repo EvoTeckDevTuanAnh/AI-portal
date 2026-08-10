@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import GlobalChatBox from "@/components/global-chat-box";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -13,7 +14,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>{children}<GlobalChatBox /></body>
     </html>
   );
 }
