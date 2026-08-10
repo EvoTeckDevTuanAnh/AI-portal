@@ -4,13 +4,16 @@
   "private": true,
   "scripts": {
     "dev": "node server.mjs",
+    "dev:all": "node scripts/start.mjs",
     "build": "next build",
     "start": "node server.mjs",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "bridge": "node src/modules/chatgpt/server/bridge.mjs",
     "start:all": "node scripts/start.mjs",
-    "start:all:nobrowser": "set OPEN_BROWSER=0&& node scripts/start.mjs"
+    "start:all:nobrowser": "set OPEN_BROWSER=0&& node scripts/start.mjs",
+    "agent:gateway": "node scripts/agent-gateway.mjs",
+    "cleanup:conversations": "node scripts/cleanup-conversations.mjs"
   },
   "dependencies": {
     "next": "^15.1.6",

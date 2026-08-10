@@ -12,6 +12,7 @@ import net from "node:net";
 import pg from "pg";
 import { WebSocketServer, WebSocket } from "ws";
 import next from "next";
+import { runWeeklyConversationCleanup } from "./scripts/cleanup-conversations.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -174,11 +175,20 @@ const handle = app.getRequestHandler();
     })
     .catch((e) => log("WARN: Postgres not reachable yet:", e.message));
 
+  void runWeeklyConversationCleanup()
+    .then((result) => log("conversation cleanup:", result))
+    .catch((e) => log("WARN: conversation cleanup skipped:", e.message));
+  const cleanupTimer = setInterval(() => {
+    void runWeeklyConversationCleanup().catch((e) => log("WARN: conversation cleanup skipped:", e.message));
+  }, 6 * 60 * 60 * 1000);
+  cleanupTimer.unref();
+
   const timer = setInterval(heartbeatLoop, BRIDGE_INTERVAL_MS);
   void heartbeatLoop(); // first snapshot right away
 
   const shutdown = async () => {
     clearInterval(timer);
+    clearInterval(cleanupTimer);
     for (const ws of clients) { try { ws.close(); } catch { /* noop */ } }
     wss.close();
     await pool.end().catch(() => {});

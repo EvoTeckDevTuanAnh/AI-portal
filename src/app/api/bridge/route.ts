@@ -1,6 +1,8 @@
 import { NextRequest } from "next/server";
 import { getBridgeState, startBridge } from "@/modules/chatgpt/server/bridge-controller";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   return Response.json(await getBridgeState());
 }

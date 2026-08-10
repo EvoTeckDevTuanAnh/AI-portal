@@ -30,8 +30,11 @@ next-env.d.ts
 # local runtime / machine-specific
 .chatgpt-profile/
 .opencode/
+.agent-codex-home/
 AI-Portal.exe
+.ai-portal.start.lock
 *.log
+AI-Portal-launcher.log
 
 # dev session logs
 conversations/

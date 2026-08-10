@@ -26,6 +26,12 @@ export const BRIDGE_URL =
     ? process.env.NEXT_PUBLIC_CHATGPT_BRIDGE_URL
     : "http://localhost:3456";
 
+function normalizeConversationId(value?: string | null) {
+  const raw = value?.trim() || "";
+  const match = raw.match(/^https?:\/\/(?:chatgpt\.com|chat\.openai\.com)\/c\/([0-9a-f-]{36})\/?$/i);
+  return (match ? match[1] : raw).toLowerCase() || null;
+}
+
 // Ensure the bridge browser + ChatGPT composer are ready before sending a prompt.
 // Fast path: if the browser is already stable (port up + composer loaded), return
 // immediately and run the send flow. Slow path: if it's NOT ready, start/open a
@@ -76,7 +82,9 @@ export async function askChatGPT(
   prompt: string,
   onStatus?: (status: string) => void,
   onProgress?: (stage: ChatProgressStage, detail?: string) => void,
+  conversationId?: string | null,
 ): Promise<string> {
+  const normalizedConversationId = normalizeConversationId(conversationId);
   let tries = 0;
   while (tries < 6) {
     tries += 1;
@@ -99,7 +107,7 @@ export async function askChatGPT(
         res = await fetch(`${BRIDGE_URL}/chat`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(stream ? { prompt, stream: true } : { prompt }),
+          body: JSON.stringify({ prompt, ...(normalizedConversationId ? { conversation_id: normalizedConversationId } : {}), ...(stream ? { stream: true } : {}) }),
           signal: ctrl.signal,
         });
       } finally {

@@ -226,7 +226,19 @@ async function sendAndWait(p, prompt, onProgress) {
   return await waitForAnswer(p, before, onProgress);
 }
 
-async function chat(prompt, onProgress) {
+function normalizeConversationId(value) {
+  const id = String(value || "").trim();
+  if (!id) return null;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) throw new Error("conversation_id must be a ChatGPT conversation UUID");
+  return id;
+}
+
+async function openConversationPage(p, conversationId) {
+  const target = conversationId ? `https://chatgpt.com/c/${conversationId}` : "https://chatgpt.com/";
+  if (p.url() !== target) await p.goto(target, { waitUntil: "domcontentloaded" });
+}
+
+async function chat(prompt, conversationId, onProgress) {
   let lastErr = "";
   // One retry with a full browser relaunch covers the case where the browser window
   // was closed (and reopened by the user) while the bridge still held a dead session.
@@ -234,6 +246,7 @@ async function chat(prompt, onProgress) {
     try {
       onProgress?.("ready", "Đang chuẩn bị AI…");
       const p = await getChatPage();
+      await openConversationPage(p, conversationId);
       onProgress?.("prepare", "Đang chờ khung soạn thảo…");
       const ready = await ensureComposer(p, 120 * 1000);
       if (!ready) throw new Error("Phiên chưa đăng nhập / khung soạn thảo không tìm thấy. Vui lòng đăng nhập trong cửa sổ AI, rồi thử lại.");
@@ -280,7 +293,7 @@ function pump() {
         } catch {}
       }
     : undefined;
-  chat(job.prompt, onProgress)
+  chat(job.prompt, job.conversationId, onProgress)
     .then((reply) => {
       log("<< done:", reply.slice(0, 50));
       if (job.stream) {
@@ -339,11 +352,16 @@ const server = http.createServer(async (req, res) => {
     req.on("end", () => {
       let prompt = "";
       let stream = false;
+      let conversationId = null;
       try {
         const parsed = JSON.parse(body || "{}");
         prompt = (parsed.prompt || "").toString();
         stream = !!parsed.stream;
-      } catch {}
+        conversationId = normalizeConversationId(parsed.conversation_id ?? parsed.conversationId);
+      } catch (e) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ ok: false, error: e instanceof SyntaxError ? "invalid JSON" : e.message }));
+      }
       if (!prompt.trim()) {
         res.writeHead(400, { "Content-Type": "application/json" });
         return res.end(JSON.stringify({ ok: false, error: "prompt is required" }));
@@ -357,7 +375,7 @@ const server = http.createServer(async (req, res) => {
         });
         res.write(": ok\n\n"); // keepalive comment so proxies don't buffer
       }
-      queue.push({ prompt, res, stream });
+      queue.push({ prompt, res, stream, conversationId });
       pump();
     });
     return;

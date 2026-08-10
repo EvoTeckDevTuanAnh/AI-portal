@@ -1,11 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
 type NavItem = {
   label: string;
   icon: React.ReactNode;
   badge?: string;
+  href?: string;
 };
 
 const ICON_SIZE = "h-4 w-4";
@@ -27,67 +29,11 @@ function ChatIcon() {
   );
 }
 
-function FolderIcon() {
+function CalendarIcon() {
   return (
     <svg className={ICON_SIZE} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M4 5a2 2 0 0 1 2-2h4l2 3h6a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
-    </svg>
-  );
-}
-
-function FileIcon() {
-  return (
-    <svg className={ICON_SIZE} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
-      <path d="M14 3v5h5" />
-    </svg>
-  );
-}
-
-function DocIcon() {
-  return (
-    <svg className={ICON_SIZE} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M4 4h16v16H4z" />
-      <path d="M8 9h8M8 13h8M8 17h5" />
-    </svg>
-  );
-}
-
-function UsersIcon() {
-  return (
-    <svg className={ICON_SIZE} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-      <circle cx="9" cy="7" r="4" />
-      <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-    </svg>
-  );
-}
-
-function HistoryIcon() {
-  return (
-    <svg className={ICON_SIZE} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 7v5l3 3" />
-    </svg>
-  );
-}
-
-function SettingsIcon() {
-  return (
-    <svg className={ICON_SIZE} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-    </svg>
-  );
-}
-
-function HelpIcon() {
-  return (
-    <svg className={ICON_SIZE} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="9" />
-      <path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.8.4-1 1-1 1.7" />
-      <path d="M12 17h.01" />
+      <rect x="3" y="4" width="18" height="17" rx="2" />
+      <path d="M8 2v4M16 2v4M3 9h18" />
     </svg>
   );
 }
@@ -127,17 +73,11 @@ function NavItem({
   active: boolean;
   onNavigate?: () => void;
 }) {
-  return (
-    <button
-      type="button"
-      onClick={onNavigate}
-      title={collapsed ? item.label : undefined}
-      className={`flex h-[38px] w-full items-center gap-3 rounded-[9px] px-3 text-left transition-colors ${
-        active
-          ? "bg-gray-100 text-ink"
-          : "text-ink-muted hover:bg-gray-50 hover:text-ink"
-      }`}
-    >
+  const cls = `flex h-[38px] w-full items-center gap-3 rounded-[9px] px-3 text-left transition-colors ${
+    active ? "bg-gray-100 text-ink" : "text-ink-muted hover:bg-gray-50 hover:text-ink"
+  }`;
+  const inner = (
+    <>
       <span className={`flex shrink-0 ${collapsed ? "mx-auto" : ""}`}>{item.icon}</span>
       {!collapsed && (
         <>
@@ -149,29 +89,46 @@ function NavItem({
           )}
         </>
       )}
+    </>
+  );
+  if (item.href) {
+    return (
+      <Link
+        href={item.href}
+        title={collapsed ? item.label : undefined}
+        className={cls}
+        aria-current={active ? "page" : undefined}
+      >
+        {inner}
+      </Link>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onNavigate}
+      title={collapsed ? item.label : undefined}
+      className={cls}
+      aria-current={active ? "page" : undefined}
+    >
+      {inner}
     </button>
   );
 }
 
-type IconItem = { label: string; icon: React.ReactNode; badge?: string };
+type IconItem = { label: string; icon: React.ReactNode; badge?: string; href?: string };
 
 export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const [active, setActive] = useState("ai-chat");
 
   const mainItems: IconItem[] = [
-    { label: "AI Chat", icon: <ChatIcon /> },
-    { label: "Projects", icon: <FolderIcon /> },
-    { label: "Templates", icon: <FileIcon /> },
-    { label: "Documents", icon: <DocIcon /> },
-    { label: "Community", icon: <UsersIcon />, badge: "NEW" },
-    { label: "History", icon: <HistoryIcon /> },
+    { label: "AI Chat", icon: <ChatIcon />, href: "/" },
+    { label: "Calendar Job", icon: <CalendarIcon />, href: "/calendar" },
+    { label: "Daily Routine", icon: <CalendarIcon />, href: "/daily-routine" },
   ];
 
-  const footerItems: IconItem[] = [
-    { label: "Settings", icon: <SettingsIcon /> },
-    { label: "Help", icon: <HelpIcon /> },
-  ];
+  const footerItems: IconItem[] = [];
 
   return (
     <aside
